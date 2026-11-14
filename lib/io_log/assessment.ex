@@ -66,7 +66,8 @@ defmodule IoLog.Assessment do
       water_alert(totals),
       stool_alert(totals),
       unusual_place_alert(events, now),
-      conflict_alert(events, now)
+      conflict_alert(events, now),
+      fluid_source_alert(events, now)
     ]
     |> Enum.reject(&is_nil/1)
   end
@@ -144,6 +145,42 @@ defmodule IoLog.Assessment do
         title: "#{count} event(s) where location and sensor disagree",
         action: "Read and validate (values are never edited)",
         source: "Scenario 7"
+      }
+    end
+  end
+
+  # Scenario 9: almost no drinking for 3 days in a row, yet urine output is
+  # normal and stable. Where does the fluid come from? Logging gap,
+  # unlogged drinking, sensor fault or a medical issue: needs a check.
+  defp fluid_source_alert(events, now) do
+    days =
+      for back <- 0..2 do
+        window_end = DateTime.add(now, -back * @window_s, :second)
+        day = Enum.filter(events, &within?(&1, window_end, @window_s))
+        {sum(day, "water_intake", "volume_ml"), sum(day, "toilet_number_1", "volume_ml")}
+      end
+
+    planned = Norms.planned_water_ml()
+    waters = Enum.map(days, &elem(&1, 0))
+    urines = Enum.map(days, &elem(&1, 1))
+    mean_urine = Enum.sum(urines) / 3
+
+    very_low_water? = Enum.all?(waters, &(&1 < planned * Norms.very_low_water_share()))
+
+    stable_normal_urine? =
+      mean_urine >= Norms.min_urine_ml() * 0.8 and
+        (Enum.max(urines) - Enum.min(urines)) / mean_urine <= 0.1
+
+    if very_low_water? and stable_normal_urine? do
+      share = round(Enum.sum(waters) / 3 / planned * 100)
+
+      %{
+        level: :alert,
+        title:
+          "Water in ~#{share}% of planned for 3 days, yet urine stable at " <>
+            "~#{Float.round(mean_urine / 1000, 1)} L/day: fluid source unexplained",
+        action: "External check by the flight surgeon; verify sensors; extra monitoring",
+        source: "Scenario 9"
       }
     end
   end

@@ -31,5 +31,12 @@ defmodule IoLogWeb.Router do
     pipe_through :api
 
     get "/health", HealthController, :index
+
+    # NFC scans forwarded by nfc_logger/server.py
+    post "/scans", ScanController, :create
+
+    # Label a sticker: bind a tag UID to a tag type and an item (food package...)
+    get "/tags", RegistryController, :index
+    post "/tags", RegistryController, :create
   end
 end

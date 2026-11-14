@@ -16,6 +16,12 @@ defmodule IoLog.Norms do
   @doc "Planned drinking water per day, ml (BVAD baseline 2.79 kg)."
   def planned_water_ml, do: 2_800
 
+  @doc """
+  Water intake below this share of the planned value counts as "almost no
+  drinking" for the unexplained-fluid-source check (scenario 9).
+  """
+  def very_low_water_share, do: 0.2
+
   @doc "Minimum daily urine output, ml (NASA renal stone risk)."
   def min_urine_ml, do: 2_000
 

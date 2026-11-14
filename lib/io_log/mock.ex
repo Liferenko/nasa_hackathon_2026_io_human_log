@@ -12,10 +12,12 @@ defmodule IoLog.Mock do
       (renal stone risk) and harder stool
     * crew_4 Sam Moe: eats lunch at the workstation, and one toilet
       event arrives while his device is in the lab (location conflict)
+    * crew_5 Kai Zoe: drinks only ~14% of the planned water, yet urine
+      output stays stable at ~2.1 L/day (unexplained fluid source)
 
   Usage:
 
-      IoLog.Mock.reload!()          # clear old mock data, generate 3 days
+      IoLog.Mock.reload!()          # clear old mock data, generate 4 days
       IoLog.Mock.generate(days: 2)  # add more without clearing
   """
 
@@ -52,13 +54,13 @@ defmodule IoLog.Mock do
   @doc """
   Generates mock events for every crew member.
 
-  Options: `:days` (default 3), `:now` (default `DateTime.utc_now/0`),
+  Options: `:days` (default 4), `:now` (default `DateTime.utc_now/0`),
   `:seed` (default 2026, so the demo is repeatable).
   Returns the number of inserted events.
   """
   @spec generate(keyword()) :: non_neg_integer()
   def generate(opts \\ []) do
-    days = Keyword.get(opts, :days, 3)
+    days = Keyword.get(opts, :days, 4)
     now = Keyword.get(opts, :now, DateTime.utc_now()) |> DateTime.truncate(:microsecond)
     :rand.seed(:exsss, {Keyword.get(opts, :seed, 2026), 7, 11})
 
@@ -115,6 +117,8 @@ defmodule IoLog.Mock do
       case person do
         # Alex Poe under-drinks: about 1.0-1.3 L/day.
         "crew_3" -> {5, 180..260}
+        # Kai Zoe: about 0.4 L/day, 14% of the planned 2.8 L.
+        "crew_5" -> {2, 190..205}
         _ -> {9, 280..340}
       end
 
@@ -134,6 +138,8 @@ defmodule IoLog.Mock do
     daily_ml =
       case person do
         "crew_3" -> Enum.random(1_150..1_450)
+        # Suspiciously stable output despite almost no drinking.
+        "crew_5" -> Enum.random(2_080..2_140)
         _ -> Enum.random(2_100..2_500)
       end
 
@@ -141,7 +147,7 @@ defmodule IoLog.Mock do
 
     for i <- 0..(voids - 1) do
       minute = 6 * 60 + 40 + div(i * 16 * 60, voids) + Enum.random(0..30)
-      volume = div(daily_ml, voids) + Enum.random(-40..40)
+      volume = div(daily_ml, voids) + void_jitter(person)
 
       # Scenario 7: one of Sam Moe's toilet events arrives while his
       # personal device places him in the lab.
@@ -175,6 +181,9 @@ defmodule IoLog.Mock do
       }
     ]
   end
+
+  defp void_jitter("crew_5"), do: Enum.random(-5..5)
+  defp void_jitter(_), do: Enum.random(-40..40)
 
   defp urine_color("crew_3"), do: "dark yellow"
   defp urine_color(_), do: Enum.random(["pale yellow", "pale yellow", "straw"])

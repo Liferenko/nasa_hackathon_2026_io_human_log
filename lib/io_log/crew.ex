@@ -8,7 +8,8 @@ defmodule IoLog.Crew do
     {"crew_1", "John Doe"},
     {"crew_2", "Jane Roe"},
     {"crew_3", "Alex Poe"},
-    {"crew_4", "Sam Moe"}
+    {"crew_4", "Sam Moe"},
+    {"crew_5", "Kai Zoe"}
   ]
 
   @doc "All crew ids in display order."
