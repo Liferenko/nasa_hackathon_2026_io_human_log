@@ -65,12 +65,16 @@ defmodule IoLog do
   ## Options
 
     * `:person` - only return events for this person
+    * `:source` - only events from this source (e.g. `"mock"`)
+    * `:exclude_source` - skip events from this source (e.g. `"mock"`)
     * `:limit` - maximum number of events to return
   """
   @spec list_events(keyword()) :: [Event.t()]
   def list_events(opts \\ []) do
     Event
     |> filter_person(opts[:person])
+    |> filter_source(opts[:source])
+    |> exclude_source(opts[:exclude_source])
     |> limit_query(opts[:limit])
     |> order_by([e], desc: e.occurred_at, desc: e.id)
     |> Repo.all()
@@ -82,6 +86,12 @@ defmodule IoLog do
 
   defp filter_person(query, nil), do: query
   defp filter_person(query, person), do: where(query, [e], e.person == ^to_string(person))
+
+  defp filter_source(query, nil), do: query
+  defp filter_source(query, source), do: where(query, [e], e.source == ^source)
+
+  defp exclude_source(query, nil), do: query
+  defp exclude_source(query, source), do: where(query, [e], e.source != ^source)
 
   defp limit_query(query, nil), do: query
   defp limit_query(query, limit) when is_integer(limit) and limit > 0, do: limit(query, ^limit)

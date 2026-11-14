@@ -47,7 +47,9 @@ defmodule IoLog.Assessment do
   end
 
   @doc "Status of a single event, judged by kind and zone."
-  @spec status(Event.t()) :: :confirmed | :conflict | :unusual
+  @spec status(Event.t()) :: :confirmed | :conflict | :unusual | :unmapped
+  def status(%Event{kind: "unmapped_scan"}), do: :unmapped
+
   def status(%Event{kind: kind, zone: zone}) do
     expected = Norms.expected_zone(kind)
 
@@ -220,9 +222,33 @@ defmodule IoLog.Assessment do
   defp sum(events, kind, key) do
     events
     |> Enum.filter(&(&1.kind == kind))
-    |> Enum.map(&(payload(&1, key) || 0))
+    |> Enum.map(&(payload(&1, key) || labelled_amount(&1, key) || 0))
     |> Enum.sum()
   end
+
+  # A tag labelled with an item ("amount" + "unit", see IoLog.NfcRegistry)
+  # counts when its unit matches the measured key: g for mass, ml for volume.
+  defp labelled_amount(event, key) do
+    unit = if String.ends_with?(key, "_ml"), do: "ml", else: "g"
+
+    with ^unit <- payload(event, "unit"),
+         amount when is_number(amount) <- to_number(payload(event, "amount")) do
+      amount
+    else
+      _ -> nil
+    end
+  end
+
+  defp to_number(value) when is_number(value), do: value
+
+  defp to_number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, _} -> number
+      :error -> nil
+    end
+  end
+
+  defp to_number(_), do: nil
 
   defp count(events, kind), do: Enum.count(events, &(&1.kind == kind))
 

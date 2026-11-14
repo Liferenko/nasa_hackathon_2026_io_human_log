@@ -3,7 +3,7 @@ defmodule IoLogWeb.TagControllerTest do
 
   test "a paired phone tapping the toilet tag records toilet_number_2", %{conn: conn} do
     conn = get(conn, "/pair/crew_2")
-    assert html_response(conn, 200) =~ "Jane Roe"
+    assert html_response(conn, 200) =~ "crew_2"
 
     conn = get(recycle(conn), "/t/toilet-2")
     assert html_response(conn, 200) =~ "Logged"

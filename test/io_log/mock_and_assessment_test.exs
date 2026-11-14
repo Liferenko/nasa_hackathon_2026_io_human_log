@@ -59,6 +59,18 @@ defmodule IoLog.MockAndAssessmentTest do
     assert is_float(hours) and hours > 8 and hours < 48
   end
 
+  test "a labelled water bottle tag counts its amount" do
+    {:ok, _} =
+      IoLog.record(:water_intake,
+        person: "lab",
+        source: "nfc",
+        occurred_at: DateTime.add(@now, -60),
+        payload: %{"item" => "Water bottle", "amount" => 500, "unit" => "ml"}
+      )
+
+    assert %{totals: %{water_ml: 500}} = summary("lab")
+  end
+
   test "clear! removes mock events only" do
     {:ok, _} = IoLog.record(:water_intake, source: "nfc")
     Mock.clear!()

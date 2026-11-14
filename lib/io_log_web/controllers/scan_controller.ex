@@ -8,8 +8,11 @@ defmodule IoLogWeb.ScanController do
 
   A registered tag becomes a ledger event with `source: "nfc"`, the tag's
   zone and the phone's scan time. If the UID labels a specific item
-  (e.g. a food package), its "item", "amount" and "unit" go into the payload. An unregistered tag is answered with 202
-  and the UID, so it can be added to `priv/nfc_registry.json`.
+  (e.g. a food package), its "item", "amount" and "unit" go into the payload.
+
+  An unregistered tag is still logged, as an `unmapped_scan` event (every
+  scan is a journal entry), and answered with 202 and the UID so it can be
+  labelled via `POST /api/tags`.
   """
 
   use IoLogWeb, :controller
@@ -54,9 +57,27 @@ defmodule IoLogWeb.ScanController do
       {:error, :unregistered_tag} ->
         Logger.info("Unregistered NFC tag #{uid} from #{device}")
 
+        # Every scan is a journal entry: keep the raw scan, its meaning can
+        # be labelled later (POST /api/tags).
+        {:ok, event} =
+          IoLog.record(:unmapped_scan,
+            person: NfcRegistry.person_for_device(device),
+            source: "nfc",
+            occurred_at: parse_time(params["scanned_at"]),
+            payload: %{
+              "tag_uid" => NfcRegistry.normalize_uid(uid),
+              "device" => device,
+              "received_at" => params["received_at"]
+            }
+          )
+
         conn
         |> put_status(:accepted)
-        |> json(%{status: "unregistered_tag", tag_id: NfcRegistry.normalize_uid(uid)})
+        |> json(%{
+          status: "unregistered_tag",
+          id: event.id,
+          tag_id: NfcRegistry.normalize_uid(uid)
+        })
     end
   end
 

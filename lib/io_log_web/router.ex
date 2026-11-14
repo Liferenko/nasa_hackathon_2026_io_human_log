@@ -17,8 +17,12 @@ defmodule IoLogWeb.Router do
   scope "/", IoLogWeb do
     pipe_through :browser
 
-    # The I/O screen. Read-only: there is no input field anywhere.
-    live "/", LedgerLive, :index
+    # Live dashboard: real devices only. Read-only, no input fields.
+    live "/", DashboardLive, :index
+    live "/p/:person", PersonLive, :show
+
+    # NASA legacy data: the demo crew on NASA-based mock data.
+    live "/nasa", LedgerLive, :index
 
     # Phone pairing: open once on a phone to make it a crew member's device.
     get "/pair/:person", TagController, :pair

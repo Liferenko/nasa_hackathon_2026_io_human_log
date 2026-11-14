@@ -73,6 +73,7 @@ defmodule IoLog.IoLogTest do
 
   test "Event exposes allowed kinds" do
     assert "food_intake" in Event.kinds()
-    assert length(Event.kinds()) == 4
+    assert length(Event.kinds()) == 5
+    assert "unmapped_scan" in Event.kinds()
   end
 end

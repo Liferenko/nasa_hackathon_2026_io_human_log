@@ -50,6 +50,20 @@ defmodule IoLogWeb.Layouts do
           .src-tag { color: var(--muted); font-size: 11px; }
           .flash { background:#12382a; color: var(--ok); padding:8px 12px; border-radius:8px; margin-bottom:12px; }
           .big { font-size: 34px; margin: 18px 0; }
+          a.plain { color: inherit; text-decoration: none; }
+          a.plain:hover { text-decoration: underline; }
+          .topbar { display:flex; justify-content:space-between; align-items:flex-start; gap: 16px; }
+          .button { display:inline-block; padding: 9px 14px; border-radius: 9px; border: 1px solid var(--line);
+                    background: var(--card); color: var(--text); text-decoration: none; font-size: 13px; white-space: nowrap; }
+          .button:hover { border-color: var(--info); }
+          .live { font-size: 11px; vertical-align: middle; padding: 2px 7px; border-radius: 999px;
+                  background: #3d1a1d; color: var(--bad); margin-left: 6px; animation: pulse 2s infinite; }
+          @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+          tr.fresh td { animation: glow 3s ease-out; }
+          @keyframes glow { from { background: #1d4a3a; } to { background: transparent; } }
+          .badge-unmapped { background: #1d2a44; color: var(--info); }
+          .person-layout { display:grid; grid-template-columns: 300px 1fr; gap: 14px; margin-top: 16px; }
+          @media (max-width: 800px) { .person-layout { grid-template-columns: 1fr; } }
         </style>
         <script src="/vendor/phoenix.min.js"></script>
         <script src="/vendor/phoenix_live_view.min.js"></script>

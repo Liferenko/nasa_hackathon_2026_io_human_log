@@ -11,7 +11,9 @@ defmodule IoLog.Event do
 
   # The single source of truth for allowed event kinds.
   # Extend this list to support new kinds of body I/O events.
-  @kinds ~w(food_intake water_intake toilet_number_1 toilet_number_2)
+  # "unmapped_scan" keeps the raw scan of an NFC tag that is not labelled yet:
+  # every scan is a journal entry, its meaning can be added later.
+  @kinds ~w(food_intake water_intake toilet_number_1 toilet_number_2 unmapped_scan)
 
   # Known sources. Not enforced yet, documented for future milestones.
   @sources ~w(manual_iex nfc ble_zone scale flow mock)

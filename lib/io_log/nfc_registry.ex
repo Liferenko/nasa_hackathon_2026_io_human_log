@@ -93,6 +93,13 @@ defmodule IoLog.NfcRegistry do
   @spec normalize_uid(String.t()) :: String.t()
   def normalize_uid(uid), do: uid |> to_string() |> String.trim() |> String.downcase()
 
+  @doc """
+  Display names of people, from the optional `"people"` object in the
+  registry, e.g. `{"crew_1": "Altynbek (biologist)"}`.
+  """
+  @spec people() :: %{String.t() => String.t()}
+  def people, do: registry() |> Map.get("people", %{})
+
   @doc "Configured tag names, sorted."
   @spec tag_names() :: [String.t()]
   def tag_names, do: tags() |> Map.keys() |> Enum.sort()

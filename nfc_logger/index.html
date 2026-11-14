@@ -10,19 +10,44 @@
   button { width: 100%; padding: 18px; font-size: 18px; border: 0; border-radius: 12px;
            background: #2d7ff9; color: #fff; margin-bottom: 12px; }
   button:disabled { background: #444; }
-  input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; border-radius: 8px;
+  input, select { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; border-radius: 8px;
           border: 1px solid #444; background: #222; color: #eee; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tabs button { padding: 12px; font-size: 16px; background: #222; margin: 0; }
+  .tabs button.active { background: #2d7ff9; }
+  #register-panel { display: none; border: 1px solid #f5c542; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
   #status { padding: 12px; border-radius: 8px; background: #222; margin-bottom: 12px; min-height: 22px; }
   .ok { color: #6be38a; } .err { color: #ff6b6b; } .pending { color: #f5c542; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { padding: 10px; border-bottom: 1px solid #333; font-family: ui-monospace, monospace; font-size: 14px; }
   small { color: #888; }
+  b.item { font-family: system-ui, sans-serif; }
 </style>
 </head>
 <body>
 <h1>NFC Tag Logger</h1>
 <label><small>Device name (saved on this phone)</small></label>
 <input id="device" placeholder="e.g. poco-x3">
+
+<div class="tabs">
+  <button id="tab-scan" class="active">Scan</button>
+  <button id="tab-register">Register sticker</button>
+</div>
+
+<div id="register-panel">
+  <small>Fill in the item, then tap its sticker. Re-tapping overwrites the label.</small>
+  <select id="reg-tag"></select>
+  <input id="reg-item" placeholder="Item, e.g. Baby puree #1">
+  <div class="row">
+    <input id="reg-amount" type="number" inputmode="decimal" placeholder="Amount">
+    <select id="reg-unit">
+      <option>g</option><option>ml</option><option>pcs</option>
+    </select>
+  </div>
+</div>
+
 <button id="start">Start scanning</button>
 <div id="status">Tap "Start scanning", then hold a tag to the back of the phone.</div>
 <ul id="log"></ul>
@@ -30,6 +55,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const QUEUE_KEY = "nfc_queue";
+let mode = "scan";
 
 // Persist device name between sessions
 try { $("device").value = localStorage.getItem("device") || ""; } catch (_) {}
@@ -37,30 +63,75 @@ $("device").addEventListener("change", () => {
   try { localStorage.setItem("device", $("device").value.trim()); } catch (_) {}
 });
 
+function esc(text) {
+  const d = document.createElement("div");
+  d.textContent = text == null ? "" : String(text);
+  return d.innerHTML;
+}
+
 function setStatus(text, cls = "") {
   $("status").textContent = text;
   $("status").className = cls;
 }
 
-function addLogLine(scan, state) {
+function setMode(next) {
+  mode = next;
+  $("tab-scan").classList.toggle("active", mode === "scan");
+  $("tab-register").classList.toggle("active", mode === "register");
+  $("register-panel").style.display = mode === "register" ? "block" : "none";
+  setStatus(mode === "register"
+    ? "Register mode: fill in the item, then tap its sticker."
+    : "Scan mode: tap a sticker to log it.", "pending");
+}
+$("tab-scan").addEventListener("click", () => setMode("scan"));
+$("tab-register").addEventListener("click", () => setMode("register"));
+
+// Tag types come from the ledger config; fall back to the known defaults
+async function loadTagTypes() {
+  let tags = ["food", "water", "toilet-1", "toilet-2"];
+  try {
+    const res = await fetch("/api/tags");
+    if (res.ok) {
+      const body = await res.json();
+      if (Array.isArray(body.tags) && body.tags.length) tags = body.tags;
+    }
+  } catch (_) {}
+  $("reg-tag").innerHTML = tags.map((t) => `<option>${esc(t)}</option>`).join("");
+}
+loadTagTypes();
+
+function addLogLine(tagId, state, note) {
   const li = document.createElement("li");
-  li.innerHTML = `<span class="${state}">●</span> ${scan.tag_id}<br>` +
-                 `<small>${new Date(scan.scanned_at).toLocaleTimeString()} · ${state}</small>`;
+  li.innerHTML = `<span class="${state}">●</span> ${esc(tagId)}<br><small></small>`;
+  li.querySelector("small").textContent = note;
   $("log").prepend(li);
   return li;
+}
+
+function updateLogLine(li, state, html) {
+  li.querySelector("span").className = state;
+  li.querySelector("small").innerHTML = html;
 }
 
 // Offline queue: scans that failed to upload are retried later
 function loadQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); } catch (_) { return []; } }
 function saveQueue(q) { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch (_) {} }
 
-async function upload(scan) {
-  const res = await fetch("/api/scans", {
+async function postJson(url, body) {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(scan),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error("HTTP " + res.status);
+  let data = {};
+  try { data = await res.json(); } catch (_) {}
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function upload(scan) {
+  const r = await postJson("/api/scans", scan);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.data;
 }
 
 async function flushQueue() {
@@ -76,30 +147,69 @@ async function flushQueue() {
 // Debounce: holding a tag to the phone can fire several reads in a row
 let lastId = null, lastTime = 0;
 
-async function handleTag(tagId) {
-  const now = Date.now();
-  if (tagId === lastId && now - lastTime < 2000) return;
-  lastId = tagId; lastTime = now;
-
+async function logScan(tagId, now) {
   const scan = {
     tag_id: tagId,
     device: $("device").value.trim() || "unknown",
     scanned_at: new Date(now).toISOString(),
   };
-  if (navigator.vibrate) navigator.vibrate(80);
-  const li = addLogLine(scan, "pending");
+  const time = new Date(now).toLocaleTimeString();
+  const li = addLogLine(tagId, "pending", time + " · sending…");
   try {
-    await upload(scan);
-    li.querySelector("span").className = "ok";
-    li.querySelector("small").textContent = new Date(now).toLocaleTimeString() + " · sent";
-    setStatus("Sent: " + tagId, "ok");
+    const res = await upload(scan);
+    const ledger = res.ledger || {};
+    if (ledger.status === "logged") {
+      const what = ledger.item || ledger.tag;
+      updateLogLine(li, "ok", `<b class="item">${esc(what)}</b> · ${esc(time)} · ${esc(ledger.person)}`);
+      setStatus("Logged: " + what, "ok");
+    } else if (ledger.status === "unregistered_tag") {
+      updateLogLine(li, "pending", `${esc(time)} · saved, but sticker is not registered`);
+      setStatus("Unknown sticker. Switch to \"Register sticker\" to label it.", "pending");
+    } else {
+      updateLogLine(li, "pending", `${esc(time)} · saved locally, ledger: ${esc(ledger.status || "n/a")}`);
+      setStatus("Saved: " + tagId, "ok");
+    }
     flushQueue();
   } catch (e) {
     const q = loadQueue(); q.push(scan); saveQueue(q);
-    li.querySelector("span").className = "err";
-    li.querySelector("small").textContent = new Date(now).toLocaleTimeString() + " · queued (offline)";
+    updateLogLine(li, "err", `${esc(time)} · queued (offline)`);
     setStatus("Server unreachable, queued: " + tagId, "err");
   }
+}
+
+async function registerTag(tagId, now) {
+  const item = $("reg-item").value.trim();
+  const amountRaw = $("reg-amount").value.trim();
+  const body = {
+    tag_id: tagId,
+    tag: $("reg-tag").value,
+    item: item || undefined,
+    amount: amountRaw === "" ? undefined : Number(amountRaw),
+    unit: amountRaw === "" ? undefined : $("reg-unit").value,
+  };
+  const time = new Date(now).toLocaleTimeString();
+  const li = addLogLine(tagId, "pending", time + " · registering…");
+  try {
+    const r = await postJson("/api/tags", body);
+    if (!r.ok) throw new Error(r.data.error || "HTTP " + r.status);
+    const label = [body.item || body.tag, amountRaw && `${amountRaw} ${body.unit}`].filter(Boolean).join(", ");
+    updateLogLine(li, "ok", `registered as <b class="item">${esc(label)}</b> (${esc(body.tag)})`);
+    setStatus("Registered: " + label + ". Fill in the next item.", "ok");
+    $("reg-item").value = "";
+    $("reg-item").focus();
+  } catch (e) {
+    updateLogLine(li, "err", `${esc(time)} · not registered: ${esc(e.message)}`);
+    setStatus("Registration failed: " + e.message, "err");
+  }
+}
+
+async function handleTag(tagId) {
+  const now = Date.now();
+  if (tagId === lastId && now - lastTime < 2000) return;
+  lastId = tagId; lastTime = now;
+  if (navigator.vibrate) navigator.vibrate(80);
+  if (mode === "register") return registerTag(tagId, now);
+  return logScan(tagId, now);
 }
 
 $("start").addEventListener("click", async () => {
