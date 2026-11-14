@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NFC Tag Logger</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #111; color: #eee; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  button { width: 100%; padding: 18px; font-size: 18px; border: 0; border-radius: 12px;
+           background: #2d7ff9; color: #fff; margin-bottom: 12px; }
+  button:disabled { background: #444; }
+  input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; border-radius: 8px;
+          border: 1px solid #444; background: #222; color: #eee; margin-bottom: 12px; }
+  #status { padding: 12px; border-radius: 8px; background: #222; margin-bottom: 12px; min-height: 22px; }
+  .ok { color: #6be38a; } .err { color: #ff6b6b; } .pending { color: #f5c542; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 10px; border-bottom: 1px solid #333; font-family: ui-monospace, monospace; font-size: 14px; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+<h1>NFC Tag Logger</h1>
+<label><small>Device name (saved on this phone)</small></label>
+<input id="device" placeholder="e.g. poco-x3">
+<button id="start">Start scanning</button>
+<div id="status">Tap "Start scanning", then hold a tag to the back of the phone.</div>
+<ul id="log"></ul>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const QUEUE_KEY = "nfc_queue";
+
+// Persist device name between sessions
+try { $("device").value = localStorage.getItem("device") || ""; } catch (_) {}
+$("device").addEventListener("change", () => {
+  try { localStorage.setItem("device", $("device").value.trim()); } catch (_) {}
+});
+
+function setStatus(text, cls = "") {
+  $("status").textContent = text;
+  $("status").className = cls;
+}
+
+function addLogLine(scan, state) {
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="${state}">●</span> ${scan.tag_id}<br>` +
+                 `<small>${new Date(scan.scanned_at).toLocaleTimeString()} · ${state}</small>`;
+  $("log").prepend(li);
+  return li;
+}
+
+// Offline queue: scans that failed to upload are retried later
+function loadQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); } catch (_) { return []; } }
+function saveQueue(q) { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch (_) {} }
+
+async function upload(scan) {
+  const res = await fetch("/api/scans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(scan),
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+}
+
+async function flushQueue() {
+  const q = loadQueue();
+  const rest = [];
+  for (const scan of q) {
+    try { await upload(scan); } catch (_) { rest.push(scan); }
+  }
+  saveQueue(rest);
+  return rest.length;
+}
+
+// Debounce: holding a tag to the phone can fire several reads in a row
+let lastId = null, lastTime = 0;
+
+async function handleTag(tagId) {
+  const now = Date.now();
+  if (tagId === lastId && now - lastTime < 2000) return;
+  lastId = tagId; lastTime = now;
+
+  const scan = {
+    tag_id: tagId,
+    device: $("device").value.trim() || "unknown",
+    scanned_at: new Date(now).toISOString(),
+  };
+  if (navigator.vibrate) navigator.vibrate(80);
+  const li = addLogLine(scan, "pending");
+  try {
+    await upload(scan);
+    li.querySelector("span").className = "ok";
+    li.querySelector("small").textContent = new Date(now).toLocaleTimeString() + " · sent";
+    setStatus("Sent: " + tagId, "ok");
+    flushQueue();
+  } catch (e) {
+    const q = loadQueue(); q.push(scan); saveQueue(q);
+    li.querySelector("span").className = "err";
+    li.querySelector("small").textContent = new Date(now).toLocaleTimeString() + " · queued (offline)";
+    setStatus("Server unreachable, queued: " + tagId, "err");
+  }
+}
+
+$("start").addEventListener("click", async () => {
+  if (!("NDEFReader" in window)) {
+    setStatus("Web NFC is not available. Use Chrome on Android over HTTPS.", "err");
+    return;
+  }
+  try {
+    const reader = new NDEFReader();
+    await reader.scan(); // triggers the permission prompt
+    $("start").disabled = true;
+    $("start").textContent = "Scanning…";
+    setStatus("Ready. Hold a tag to the phone.", "ok");
+
+    reader.addEventListener("reading", ({ serialNumber }) => {
+      handleTag(serialNumber || "no-serial");
+    });
+    reader.addEventListener("readingerror", () => {
+      setStatus("Tag detected but not readable (not NDEF-formatted?). Format it in NFC Tools.", "err");
+    });
+    const left = await flushQueue();
+    if (left) setStatus(`Ready. ${left} queued scan(s) still pending.`, "pending");
+  } catch (e) {
+    setStatus("Error: " + e.message, "err");
+  }
+});
+</script>
+</body>
+</html>
