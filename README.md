@@ -25,7 +25,7 @@ stone risk from NASA HRP evidence).
 
 ```sh
 mix setup            # deps.get + ecto.create + ecto.migrate
-mix io_log.mock      # optional: 3 days of NASA-based mock data for 4 crew
+mix io_log.mock      # optional: 4 days of NASA-based mock data for 5 crew
 iex -S mix phx.server
 ```
 
@@ -46,15 +46,33 @@ Open http://localhost:4000 for the I/O screen. The server listens on
 ## Mock data (demo phase 2)
 
 ```elixir
-IoLog.Mock.reload!()         # clear old mock events, generate 3 days
+IoLog.Mock.reload!()         # clear old mock events, generate 4 days
 IoLog.Mock.reload!(days: 5)
 IoLog.Mock.clear!()          # removes events with source "mock" only
 ```
 
 The built-in story matches `features/io_ledger.feature`:
 John Doe and Jane Roe are healthy, Alex Poe under-drinks (renal stone risk,
-hard stool), Sam Moe eats at the workstation and has one location conflict.
+hard stool), Sam Moe eats at the workstation and has one location conflict,
+Kai Zoe drinks only ~14% of the planned water while urine stays stable at
+~2.1 L/day (unexplained fluid source, needs an external check).
 Reference values are in `lib/io_log/norms.ex` with their NASA sources.
+
+## NFC via the Web NFC logger (`nfc_logger/`)
+
+The phones read tag UIDs with the Web NFC page served by `nfc_logger/server.py`
+(port 8765, HTTPS through `tailscale serve`). Every scan is stored in
+`nfc_logger/scans.jsonl` and forwarded to this app:
+
+```
+phone (Web NFC) -> nfc_logger :8765 -> POST http://127.0.0.1:4000/api/scans -> ledger -> I/O screen
+```
+
+- `priv/nfc_registry.json` maps tag UIDs to tag names (`toilet-2`, `water`, ...)
+  and device names to crew ids. It is read on every scan: edit, save, done.
+- An unregistered UID is answered with `{"status":"unregistered_tag"}` and not logged.
+- An unknown device is logged under its own device name (e.g. a ground team phone).
+- Disable forwarding with `IO_LOG_URL="" python3 server.py`.
 
 ## NFC tags (zero manual input)
 

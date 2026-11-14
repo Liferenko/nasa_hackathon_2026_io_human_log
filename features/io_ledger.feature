@@ -93,3 +93,14 @@ Feature: Body I/O ledger with zero manual input
     Then the record is written to "John Doe"'s logging journal with status "confirmed"
     And the record is flagged "eating outside the galley"
     And an overload signal is raised for "John Doe" if this is the third such record within 2 days
+
+  Scenario: Stable urine output without matching water intake
+    Given "Kai Zoe" has a planned water intake of 2.8 L per day
+    And "Kai Zoe"'s logging journal shows about 0.4 L of water per day for the last 3 days, 14% of the planned value
+    And "Kai Zoe"'s urine output is stable at about 2.1 L per day for the same 3 days
+    When the daily assessment runs
+    Then an anomaly "fluid source unexplained" is raised for "Kai Zoe"
+    And the case is flagged for an external check by the flight surgeon
+    And the intake sensors of "Kai Zoe" are marked for verification
+    And "Kai Zoe" is put under extra monitoring
+    And no record values are changed
