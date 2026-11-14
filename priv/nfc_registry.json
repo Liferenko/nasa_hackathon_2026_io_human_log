@@ -1,0 +1,12 @@
+{
+  "_comment": "Maps NFC tag UIDs (read by the Web NFC page) to tag names from config :io_log, :nfc_tags, and device names to crew ids. Edit and save: no restart needed.",
+  "uids": {
+    "04:00:81:1c:05:00:01": "toilet-2",
+    "04:00:7d:1e:05:00:01": "water",
+    "04:00:ef:1d:05:00:01": "food"
+  },
+  "devices": {
+    "Altynbek biologist": "crew_1",
+    "Jane engineer": "crew_2"
+  }
+}
