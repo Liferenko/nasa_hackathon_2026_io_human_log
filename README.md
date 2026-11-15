@@ -1,7 +1,9 @@
-# BodyLogs I/O Ledger
+# BodyLogs
 
 NASA Space Apps Challenge 2026 project for the challenge
 "Create Health Monitoring Software for Astronauts on Space Missions".
+
+https://www.spaceappschallenge.org/2026/find-a-team/1992/?tab=project
 
 An automatic, zero-manual-input ledger of what goes **into** and **out of**
 an astronaut's body: food, water and toilet use.
