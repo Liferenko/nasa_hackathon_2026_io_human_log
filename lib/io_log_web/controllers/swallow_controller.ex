@@ -9,6 +9,10 @@ defmodule IoLogWeb.SwallowController do
 
   Needs HTTPS for motion sensors (e.g. `tailscale serve`). Nothing is typed:
   the only choices are the device name (once) and the sensitivity.
+
+  While the page is open it also listens for NFC tags (Web NFC, Chrome on
+  Android): tapping a labelled food package to the phone sends the scan to
+  `POST /api/scans`, so food intake is logged without leaving this page.
   """
 
   use IoLogWeb, :controller
@@ -40,7 +44,7 @@ defmodule IoLogWeb.SwallowController do
         .big { font-size: 64px; font-weight: 700; text-align: center; margin: 8px 0 0; }
         .label { text-align: center; color: #8a93a8; }
         canvas { width: 100%; height: 140px; background: #121828; border-radius: 10px; margin-top: 12px; }
-        #status { margin-top: 10px; font-size: 13px; color: #8a93a8; min-height: 18px; }
+        #status, #nfc { margin-top: 10px; font-size: 13px; color: #8a93a8; min-height: 18px; }
         .ok { color: #4ade80; } .bad { color: #f87171; }
         input[type=range] { flex: 1; }
       </style>
@@ -63,6 +67,8 @@ defmodule IoLogWeb.SwallowController do
       <div class="label">swallows logged</div>
       <canvas id="plot" width="600" height="140"></canvas>
       <div id="status">Not started.</div>
+      <div id="nfc">NFC: off</div>
+      <button id="nfcBtn" style="display:none;width:100%;margin-top:8px">Enable NFC</button>
 
       <script>
         const DEVICES = __DEVICES__;
@@ -177,6 +183,54 @@ defmodule IoLogWeb.SwallowController do
           requestAnimationFrame(draw);
         }
 
+        // --- NFC: food packages are tapped while the swallow sensor runs ---
+        let nfcOn = false, lastTag = null, lastTagAt = 0;
+
+        function setNfc(text, cls) { const n = $("nfc"); n.textContent = "NFC: " + text; n.className = cls || ""; }
+
+        async function startNfc() {
+          if (nfcOn) return;
+          if (!("NDEFReader" in window)) { setNfc("not available (needs Chrome on Android)"); return; }
+          try {
+            const reader = new NDEFReader();
+            await reader.scan();
+            nfcOn = true;
+            setNfc("listening, tap a food package", "ok");
+            reader.addEventListener("reading", ({ serialNumber }) => onTag(serialNumber || "no-serial"));
+            reader.addEventListener("readingerror", () => setNfc("tag not readable", "bad"));
+          } catch (err) {
+            const hint = err.name === "NotAllowedError"
+              ? " Allow NFC for this site (lock icon > Permissions), then tap Enable NFC." : "";
+            setNfc("error: " + err.message + hint, "bad");
+            $("nfcBtn").style.display = "block";
+            return;
+          }
+          $("nfcBtn").style.display = "none";
+        }
+
+        $("nfcBtn").onclick = startNfc;
+
+        async function onTag(tagId) {
+          const now = Date.now();
+          if (tagId === lastTag && now - lastTagAt < 2000) return;
+          lastTag = tagId; lastTagAt = now;
+          if (navigator.vibrate) navigator.vibrate(80);
+          try {
+            const res = await fetch("/api/scans", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ tag_id: tagId, device: sel.value, scanned_at: new Date(now).toISOString() })
+            });
+            const body = await res.json().catch(() => ({}));
+            const time = new Date(now).toLocaleTimeString();
+            if (res.status === 201) setNfc(time + " logged " + (body.item || body.tag || body.kind), "ok");
+            else if (res.status === 202) setNfc(time + " unregistered tag " + tagId, "bad");
+            else setNfc("server said " + res.status, "bad");
+          } catch (err) {
+            setNfc("not sent: " + err.message, "bad");
+          }
+        }
+
         $("start").onclick = async () => {
           if (running) { running = false; $("start").textContent = "Start"; setStatus("Paused."); return; }
           if (typeof DeviceMotionEvent !== "undefined" && DeviceMotionEvent.requestPermission) {
@@ -184,6 +238,7 @@ defmodule IoLogWeb.SwallowController do
             if (p !== "granted") { setStatus("Motion permission denied.", "bad"); return; }
           }
           if (!window.isSecureContext) setStatus("Needs HTTPS for motion sensors.", "bad");
+          startNfc();
           try { await navigator.wakeLock?.request("screen"); } catch (_) {}
           running = true; calib = []; calibUntil = performance.now() + CALIBRATE;
           $("start").textContent = "Pause";

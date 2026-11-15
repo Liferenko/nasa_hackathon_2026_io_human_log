@@ -1,152 +1,58 @@
-# BodyLogs I/O Ledger (`io_log`)
+# BodyLogs I/O Ledger
 
 NASA Space Apps Challenge 2026 project for the challenge
 "Create Health Monitoring Software for Astronauts on Space Missions".
 
-An automatic, zero-manual-input ledger of human body **input/output events**
-for astronauts: food intake, water intake and toilet use. Events come from
-sensors (NFC tags, BLE zones, scales, flow meters) and, for the demo, from
-NASA-based mock data. The ledger is **append-only**: events are never updated
-or deleted.
+An automatic, zero-manual-input ledger of what goes **into** and **out of**
+an astronaut's body: food, water and toilet use.
 
-Collect -> assess -> act: the I/O screen turns the raw ledger into per-person
-totals, alerts and action cards (for example urine below 2 L/day, a renal
-stone risk from NASA HRP evidence).
+## The problem
 
-## Stack
+On long missions, fluid balance, nutrition and digestion are early signals of
+health problems: dehydration, renal stone risk, constipation, unexplained fluid
+sources. Today this data is mostly logged by hand, which costs crew time and
+produces gaps and errors. A busy astronaut forgets to log a drink; a missed
+entry hides a trend until it becomes a medical issue.
 
-- Elixir 1.15+ / Erlang/OTP 25+ (verified with Elixir 1.18)
-- Phoenix 1.8 + LiveView 1.1, Bandit HTTP server, no asset pipeline
-  (the Phoenix and LiveView JS clients are served from the deps under `/vendor`)
-- Ecto + SQLite (`ecto_sqlite3`)
-- Phoenix.PubSub for live updates
+## Our approach
 
-## Setup and run
+**Collect -> assess -> act**, with no manual input from the crew:
 
-```sh
-mix setup            # deps.get + ecto.create + ecto.migrate
-mix io_log.mock      # optional: 4 days of NASA-based mock data for 5 crew
-iex -S mix phx.server
-```
+- **Collect.** Sensors and tags record each event automatically (who, what,
+  where, when). The ledger is append-only: events are never edited or deleted.
+- **Assess.** Events are compared with NASA reference values (for example
+  2.8 L/day planned water, at least 2 L/day urine) per crew member.
+- **Act.** The I/O screen shows live totals, alerts and concrete action cards,
+  such as "Drink +600 ml spread over the next 6 hours", and flags suspicious
+  events (toilet use outside the toilet zone, eating outside the galley).
 
-Open http://localhost:4000 for the I/O screen. The server listens on
-`0.0.0.0:4000`, so phones on the same network (or Tailscale) can reach it at
-`http://<your-computer>:4000`.
+The demo runs on NASA-based mock data for a 5-person crew, with realistic
+stories: healthy crew, chronic under-drinking with renal stone risk, eating at
+the workstation, and an unexplained fluid source that needs an external check.
 
-## The I/O screen (`/`)
+## Technologies
 
-- One card per crew member for the last 24 hours: water in vs planned
-  2.8 L (NASA BVAD), urine out vs 2 L/day minimum (NASA renal stone risk),
-  food, urinations, stool with Bristol type, gut transit time.
-- Alerts with action cards, e.g. "Drink +600 ml spread over the next 6 hours".
-- A live ledger table with a status per event: `confirmed`, `conflict`
-  (toilet event outside the toilet zone) or `unusual` (eating outside the galley).
-- No input field anywhere: the page is read-only and updates live.
+Used now:
 
-## Mock data (demo phase 2)
+- Elixir / Erlang OTP, Phoenix LiveView: live, read-only dashboard
+- SQLite: append-only event ledger
+- NFC tags + phones (Web NFC): tap-to-log events with zero typing
+- Python: Web NFC logger that forwards scans to the ledger
+- Tailscale: secure access from phones in the demo network
 
-```elixir
-IoLog.Mock.reload!()         # clear old mock events, generate 4 days
-IoLog.Mock.reload!(days: 5)
-IoLog.Mock.clear!()          # removes events with source "mock" only
-```
+Planned:
 
-The built-in story matches `features/io_ledger.feature`:
-John Doe and Jane Roe are healthy, Alex Poe under-drinks (renal stone risk,
-hard stool), Sam Moe eats at the workstation and has one location conflict,
-Kai Zoe drinks only ~14% of the planned water while urine stays stable at
-~2.1 L/day (unexplained fluid source, needs an external check).
-Reference values are in `lib/io_log/norms.ex` with their NASA sources.
+- BLE zone beacons: automatic location of each event (galley, toilet, lab)
+- Smart scales: food amount and body mass
+- Flow meters: water intake and urine volume
+- Swallowing sensor: detect actual food and water intake
+- Embedded hardware (ESP32 / Arduino) for the sensor nodes
 
-## NFC via the Web NFC logger (`nfc_logger/`)
+## Technical details
 
-The phones read tag UIDs with the Web NFC page served by `nfc_logger/server.py`
-(port 8765, HTTPS through `tailscale serve`). Every scan is stored in
-`nfc_logger/scans.jsonl` and forwarded to this app:
+How to run the server, load mock data, connect NFC tags and run tests:
+see [TECH_README.md](TECH_README.md).
 
-```
-phone (Web NFC) -> nfc_logger :8765 -> POST http://127.0.0.1:4000/api/scans -> ledger -> I/O screen
-```
+## License
 
-- `priv/nfc_registry.json` maps tag UIDs to tag names (`toilet-2`, `water`, ...)
-  and device names to crew ids. It is read on every scan: edit, save, done.
-- An unregistered UID is answered with `{"status":"unregistered_tag"}` and not logged.
-- An unknown device is logged under its own device name (e.g. a ground team phone).
-- Disable forwarding with `IO_LOG_URL="" python3 server.py`.
-
-## NFC tags (zero manual input)
-
-1. Pair each phone once: open `http://<host>:4000/pair/crew_1` on the first
-   phone, `.../pair/crew_2` on the second. The pairing is kept in a cookie.
-2. Write an NDEF URL record on each tag, e.g. `http://<host>:4000/t/toilet-2`.
-3. Tapping a tag with a paired phone records the event with `source: "nfc"`
-   and the tag's zone; the I/O screen updates live.
-
-Registered tags (`config :io_log, :nfc_tags` in `config/config.exs`):
-
-| Tag        | Event             | Zone   |
-|------------|-------------------|--------|
-| `food`     | `food_intake`     | galley |
-| `water`    | `water_intake`    | galley |
-| `toilet-1` | `toilet_number_1` | toilet |
-| `toilet-2` | `toilet_number_2` | toilet |
-
-Without pairing, `?p=crew_1` on the URL also works (for quick tests).
-
-## Recording events from iex
-
-```elixir
-IoLog.record(:food_intake)
-IoLog.record(:water_intake)
-IoLog.record(:toilet_number_2)
-IoLog.record(:toilet_number_1, person: "crew_2", payload: %{volume_ml: 320})
-IoLog.list_events()
-IoLog.list_events(person: "crew_2")
-```
-
-`IoLog.record/2` returns `{:ok, %IoLog.Event{}}`, or `{:error, changeset}`
-for an unknown kind.
-
-| Option         | Default        | Notes                                                      |
-|----------------|----------------|------------------------------------------------------------|
-| `:person`      | `"crew_1"`     | Crew member id (`crew_1`..`crew_4` have display names)      |
-| `:source`      | `"manual_iex"` | `nfc`, `ble_zone`, `scale`, `flow`, `mock`                 |
-| `:zone`        | `nil`          | `galley`, `toilet`, `workstation`, `lab`, ...              |
-| `:payload`     | `%{}`          | Free-form map, stored as JSON (read back with string keys) |
-| `:occurred_at` | now (UTC)      | `DateTime` when the event happened                         |
-
-Allowed kinds live in `@kinds` in `lib/io_log/event.ex`. Every recorded event
-is broadcast on the PubSub topic `"events"` as `{:event_recorded, event}`.
-
-## Other endpoints
-
-```sh
-curl http://localhost:4000/api/health
-# {"app":"io_log","events":187}
-```
-
-## Time zone
-
-The ledger stores UTC. Dev shows and generates demo times in Bishkek time
-(`config :io_log, :utc_offset_minutes, 360` in `config/dev.exs`).
-
-## Tests
-
-```sh
-mix test
-```
-
-## Project layout
-
-```
-lib/io_log.ex                       Public API: record/2, list_events/1, subscribe/0
-lib/io_log/event.ex                 Event schema, allowed kinds
-lib/io_log/norms.ex                 NASA reference values (with sources)
-lib/io_log/assessment.ex            Totals, alerts, action cards, event status
-lib/io_log/mock.ex                  NASA-based mock data generator
-lib/io_log/crew.ex, clock.ex        Demo crew names, local time helpers
-lib/io_log_web/live/ledger_live.ex  The I/O screen (LiveView)
-lib/io_log_web/controllers/         NFC tap + pairing, health, errors
-lib/mix/tasks/io_log.mock.ex        mix io_log.mock
-features/io_ledger.feature          Core scenarios (Gherkin)
-```
+See [LICENSE](LICENSE).
