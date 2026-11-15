@@ -100,6 +100,10 @@ defmodule IoLog.NfcRegistry do
   @spec people() :: %{String.t() => String.t()}
   def people, do: registry() |> Map.get("people", %{})
 
+  @doc "Device names (as sent by the phones) mapped to crew ids."
+  @spec devices() :: %{String.t() => String.t()}
+  def devices, do: registry() |> Map.get("devices", %{})
+
   @doc "Configured tag names, sorted."
   @spec tag_names() :: [String.t()]
   def tag_names, do: tags() |> Map.keys() |> Enum.sort()

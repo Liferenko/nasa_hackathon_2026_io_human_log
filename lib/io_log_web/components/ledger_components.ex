@@ -38,6 +38,10 @@ defmodule IoLogWeb.LedgerComponents do
         <span>Urinations</span><span>{@summary.totals.voids}</span>
         <span>Stool</span><span>{@summary.totals.stools}{bristol_suffix(@summary.totals.last_bristol)}</span>
         <span>Gut transit time</span><span>{transit(@summary.totals.transit_h)}</span>
+        <span :if={@summary.totals.swallows > 0}>Swallows (throat sensor)</span>
+        <span :if={@summary.totals.swallows > 0}>
+          {@summary.totals.swallows}, last {clock(@summary.totals.last_swallow_at)}
+        </span>
       </div>
       <div :if={@summary.alerts == []} class="alert alert-info">
         <b class="ok">All within NASA reference values</b>
@@ -51,13 +55,71 @@ defmodule IoLogWeb.LedgerComponents do
     """
   end
 
+  @doc """
+  Journal rows for the main board, newest first: swallows of one person
+  less than 2 minutes apart become one "swallowing" row (count and time
+  span) that grows live; every other event is a row of its own. The raw
+  swallows stay in the ledger and are listed one by one on the person page.
+  """
+  @spec journal_rows([IoLog.Event.t()], pos_integer()) :: [IoLog.Event.t()]
+  def journal_rows(events, limit) do
+    {swallows, others} = Enum.split_with(events, &(&1.kind == "swallow"))
+
+    swallows
+    |> Enum.group_by(& &1.person)
+    |> Enum.flat_map(fn {_person, list} -> swallow_bursts(list) end)
+    |> Enum.concat(others)
+    |> Enum.sort_by(&DateTime.to_unix(&1.occurred_at, :microsecond), :desc)
+    |> Enum.take(limit)
+  end
+
+  defp swallow_bursts(swallows) do
+    swallows
+    |> Enum.sort_by(&DateTime.to_unix(&1.occurred_at, :microsecond))
+    |> Enum.chunk_while(
+      [],
+      fn s, acc ->
+        case acc do
+          [last | _] ->
+            if DateTime.diff(s.occurred_at, last.occurred_at) <= 120,
+              do: {:cont, [s | acc]},
+              else: {:cont, Enum.reverse(acc), [s]}
+
+          [] ->
+            {:cont, [s]}
+        end
+      end,
+      fn
+        [] -> {:cont, []}
+        acc -> {:cont, Enum.reverse(acc), []}
+      end
+    )
+    |> Enum.map(fn [first | _] = burst ->
+      last = List.last(burst)
+
+      %{
+        last
+        | id: "swallowing-#{first.id}",
+          kind: "swallowing",
+          inserted_at: Enum.max_by(burst, & &1.inserted_at, DateTime).inserted_at,
+          payload: %{"count" => length(burst), "from" => first.occurred_at, "to" => last.occurred_at}
+      }
+    end)
+  end
+
   @doc "The journal table, newest first. Rows recorded in the last few seconds glow."
   attr :events, :list, required: true
   attr :names, :map, default: %{}
   attr :now, :any, required: true
   attr :show_person, :boolean, default: true
 
+  attr :context, :map,
+    default: nil,
+    doc: "cross-source context (Assessment.context/1) of all events, not just the shown rows"
+
   def journal(assigns) do
+    assigns = assign(assigns, :ctx, assigns.context || Assessment.context(assigns.events))
+
     ~H"""
     <div class="card">
       <p :if={@events == []} class="sub">No entries yet. Tap an NFC tag with a phone.</p>
@@ -80,11 +142,13 @@ defmodule IoLogWeb.LedgerComponents do
               <a href={"/p/" <> URI.encode(e.person)} class="plain">{person_name(e.person, @names)}</a>
             </td>
             <td>{kind_label(e.kind)}</td>
-            <td>{amount(e)}</td>
+            <td>{amount(e)}{swallow_note(Assessment.swallow_count(e, @ctx))}</td>
             <td>{e.zone || "-"}</td>
             <td class="src-tag">{e.source}</td>
             <td>
-              <span class={"badge badge-#{Assessment.status(e)}"}>{Assessment.status(e)}</span>
+              <span class={"badge badge-#{Assessment.status(e, @ctx)}"}>
+                {Assessment.status(e, @ctx)}
+              </span>
             </td>
           </tr>
         </tbody>

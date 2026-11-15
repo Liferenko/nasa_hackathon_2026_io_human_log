@@ -29,6 +29,9 @@ defmodule IoLogWeb.Router do
 
     # NFC tags carry an NDEF URL like http://<host>:4000/t/toilet-2
     get "/t/:tag", TagController, :tap
+
+    # Swallow sensor: a phone on the throat, open this page on it (HTTPS).
+    get "/swallow", SwallowController, :show
   end
 
   scope "/api", IoLogWeb do
@@ -42,5 +45,8 @@ defmodule IoLogWeb.Router do
     # Label a sticker: bind a tag UID to a tag type and an item (food package...)
     get "/tags", RegistryController, :index
     post "/tags", RegistryController, :create
+
+    # Sensor readings detected on a device (e.g. swallows from /swallow)
+    post "/sensors", SensorController, :create
   end
 end

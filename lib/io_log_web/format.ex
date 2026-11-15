@@ -8,7 +8,10 @@ defmodule IoLogWeb.Format do
     "water_intake" => "Water",
     "toilet_number_1" => "Urine",
     "toilet_number_2" => "Stool",
-    "unmapped_scan" => "Unlabelled tag"
+    "unmapped_scan" => "Unlabelled tag",
+    "zone_enter" => "Entered zone",
+    "swallow" => "Swallow",
+    "swallowing" => "Swallowing"
   }
 
   @doc "Local wall-clock time, e.g. \"Sat 14:05\"."
@@ -55,14 +58,43 @@ defmodule IoLogWeb.Format do
       "unmapped_scan" ->
         join([get(p, "tag_uid"), get(p, "device")])
 
+      "swallow" ->
+        join([unit(get(p, "peak"), "m/s²"), unit(get(p, "duration_ms"), "ms")])
+
+      "swallowing" ->
+        swallowing(get(p, "count"), get(p, "from"), get(p, "to"))
+
       _ ->
         ""
     end
   end
 
+  @doc """
+  Swallow check shown next to a food or water tap, e.g. " · 5 swallows".
+  Empty when the person wears no swallow sensor.
+  """
+  def swallow_note(nil), do: ""
+  def swallow_note(1), do: " · 1 swallow"
+  def swallow_note(n), do: " · #{n} swallows"
+
   @doc "Formats millilitres as litres with one decimal, e.g. \"2.4 L\"."
   def litres(ml) when is_number(ml), do: "#{Float.round(ml / 1000, 1)} L"
   def litres(_), do: "-"
+
+  @doc "Clock time only, e.g. \"16:05\"."
+  def clock(%DateTime{} = dt) do
+    local = Clock.to_local(dt)
+    "#{pad(local.hour)}:#{pad(local.minute)}"
+  end
+
+  def clock(_), do: "-"
+
+  defp swallowing(1, _from, _to), do: "1 swallow"
+
+  defp swallowing(count, from, to) do
+    span = if clock(from) == clock(to), do: clock(to), else: "#{clock(from)}–#{clock(to)}"
+    "#{count} swallows, #{span}"
+  end
 
   defp bristol(nil), do: nil
   defp bristol(type), do: "Bristol #{type}"

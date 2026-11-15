@@ -2,9 +2,15 @@ defmodule IoLog.Assessment do
   @moduledoc """
   Turns the raw ledger into what the crew can act on: per-person totals
   for the last 24 hours, alerts, action cards and a status for every
-  event (confirmed / conflict / unusual).
+  event (confirmed / conflict / unusual / duplicate / unmapped).
 
-  The assessment never changes events: it only reads them.
+  The assessment never changes events: it only reads them. A repeat tap is
+  kept in the ledger and marked `duplicate`; it is left out of totals and
+  alerts.
+
+  Independent sources cross-check each other: a "zone_enter" tap says where
+  the person really is, swallows from the throat sensor say whether a food
+  or water tap was actually consumed.
   """
 
   alias IoLog.{Crew, Event, Norms}
@@ -17,6 +23,8 @@ defmodule IoLog.Assessment do
   """
   @spec summary(String.t(), [Event.t()], DateTime.t()) :: map()
   def summary(person, events, now) do
+    events = drop_duplicates(events)
+    ctx = context(events)
     recent = Enum.filter(events, &within?(&1, now, @window_s))
 
     water_ml = sum(recent, "water_intake", "volume_ml")
@@ -34,17 +42,144 @@ defmodule IoLog.Assessment do
       stools: length(stools),
       last_bristol: last_value(stools, "bristol_type"),
       drinks_minus_urine_ml: water_ml - urine_ml,
-      transit_h: transit_hours(events)
+      transit_h: transit_hours(events),
+      swallows: count(recent, "swallow"),
+      last_swallow_at:
+        recent
+        |> Enum.filter(&(&1.kind == "swallow"))
+        |> Enum.max_by(& &1.occurred_at, DateTime, fn -> nil end)
+        |> case do
+          nil -> nil
+          swallow -> swallow.occurred_at
+        end
     }
 
     %{
       person: person,
       name: Crew.name(person),
       totals: totals,
-      alerts: alerts(totals, events, now),
+      alerts: alerts(totals, events, now, ctx),
       event_count: length(recent)
     }
   end
+
+  @doc """
+  Ids of events that repeat an earlier tap: same person, same kind and same
+  tag (or item) within `IoLog.Norms.debounce_s/1` seconds of the last
+  counted event. Raw events stay in the ledger untouched.
+  """
+  @spec duplicate_ids([Event.t()]) :: MapSet.t()
+  def duplicate_ids(events) do
+    events
+    |> Enum.filter(&Norms.debounce_s(&1.kind))
+    |> Enum.group_by(&debounce_key/1)
+    |> Enum.flat_map(fn {_key, group} -> repeats(group) end)
+    |> MapSet.new()
+  end
+
+  @doc "Events without repeat taps (see `duplicate_ids/1`)."
+  @spec drop_duplicates([Event.t()]) :: [Event.t()]
+  def drop_duplicates(events) do
+    dups = duplicate_ids(events)
+    Enum.reject(events, &MapSet.member?(dups, &1.id))
+  end
+
+  defp debounce_key(%Event{} = e) do
+    {e.person, e.kind, payload(e, "tag_uid") || payload(e, "item")}
+  end
+
+  # Walk one group oldest first; a tap within the window of the last
+  # counted tap is a repeat. Ties on time are broken by id.
+  defp repeats(group) do
+    window = group |> hd() |> Map.fetch!(:kind) |> Norms.debounce_s()
+
+    group
+    |> Enum.sort_by(&{DateTime.to_unix(&1.occurred_at, :microsecond), &1.id})
+    |> Enum.reduce({nil, []}, fn e, {last, dups} ->
+      if last && DateTime.diff(e.occurred_at, last.occurred_at, :millisecond) < window * 1000 do
+        {last, [e.id | dups]}
+      else
+        {e, dups}
+      end
+    end)
+    |> elem(1)
+  end
+
+  @doc """
+  Cross-source context for `status/2` and `swallow_count/2`, built once
+  from a list of events (any people, any order).
+  """
+  @spec context([Event.t()]) :: map()
+  def context(events) do
+    %{
+      duplicates: duplicate_ids(events),
+      presence: events |> Enum.filter(&(&1.kind == "zone_enter")) |> Enum.group_by(& &1.person),
+      swallows: events |> Enum.filter(&(&1.kind == "swallow")) |> Enum.group_by(& &1.person)
+    }
+  end
+
+  @doc """
+  Status of an event within its context (from `context/1`, or just a set of
+  duplicate ids):
+
+    * `:duplicate` - a repeat tap;
+    * otherwise as `status/1`, but judged by where the person really was
+      (the latest "zone_enter" within `IoLog.Norms.presence_s/0`) when
+      that is known, instead of the zone of the tag.
+  """
+  @spec status(Event.t(), map() | MapSet.t()) :: atom()
+  def status(event, %MapSet{} = duplicates),
+    do: status(event, %{duplicates: duplicates, presence: %{}, swallows: %{}})
+
+  def status(%Event{id: id} = event, ctx) do
+    zone = presence_zone(event, ctx)
+
+    cond do
+      MapSet.member?(ctx.duplicates, id) -> :duplicate
+      zone -> status(%{event | zone: zone})
+      true -> status(event)
+    end
+  end
+
+  @doc "Zone the person entered last before `event` (nil if unknown)."
+  @spec presence_zone(Event.t(), map()) :: String.t() | nil
+  def presence_zone(%Event{kind: kind, person: person, occurred_at: at}, ctx) do
+    if Norms.expected_zone(kind) do
+      ctx.presence
+      |> Map.get(person, [])
+      |> Enum.filter(fn p ->
+        diff = DateTime.diff(at, p.occurred_at)
+        diff >= 0 and diff <= Norms.presence_s()
+      end)
+      |> Enum.max_by(& &1.occurred_at, DateTime, fn -> nil end)
+      |> case do
+        nil -> nil
+        enter -> enter.zone
+      end
+    end
+  end
+
+  @doc """
+  Swallows of the same person from 2 minutes before a food or water tap to
+  `IoLog.Norms.swallow_window_s/0` after it. `nil` for other events or when
+  the person wears no swallow sensor (no swallows at all).
+  """
+  @spec swallow_count(Event.t(), map()) :: non_neg_integer() | nil
+  def swallow_count(%Event{kind: kind, person: person, occurred_at: at}, ctx)
+      when kind in ["food_intake", "water_intake"] do
+    case Map.get(ctx.swallows, person, []) do
+      [] ->
+        nil
+
+      swallows ->
+        Enum.count(swallows, fn s ->
+          diff = DateTime.diff(s.occurred_at, at)
+          diff >= -120 and diff <= Norms.swallow_window_s()
+        end)
+    end
+  end
+
+  def swallow_count(_event, _ctx), do: nil
 
   @doc "Status of a single event, judged by kind and zone."
   @spec status(Event.t()) :: :confirmed | :conflict | :unusual | :unmapped
@@ -62,14 +197,16 @@ defmodule IoLog.Assessment do
 
   # -- alerts and action cards -------------------------------------------
 
-  defp alerts(totals, events, now) do
+  defp alerts(totals, events, now, ctx) do
     [
       urine_alert(totals),
       water_alert(totals),
       stool_alert(totals),
-      unusual_place_alert(events, now),
-      conflict_alert(events, now),
-      fluid_source_alert(events, now)
+      unusual_place_alert(events, now, ctx),
+      conflict_alert(events, now, ctx),
+      fluid_source_alert(events, now),
+      not_swallowed_alert(events, now, ctx),
+      unlogged_swallowing_alert(events, now)
     ]
     |> Enum.reject(&is_nil/1)
   end
@@ -107,10 +244,10 @@ defmodule IoLog.Assessment do
 
   defp stool_alert(_), do: nil
 
-  defp unusual_place_alert(events, now) do
+  defp unusual_place_alert(events, now, ctx) do
     count =
       events
-      |> Enum.filter(&(within?(&1, now, 2 * @window_s) and status(&1) == :unusual))
+      |> Enum.filter(&(within?(&1, now, 2 * @window_s) and status(&1, ctx) == :unusual))
       |> length()
 
     cond do
@@ -135,10 +272,10 @@ defmodule IoLog.Assessment do
     end
   end
 
-  defp conflict_alert(events, now) do
+  defp conflict_alert(events, now, ctx) do
     count =
       events
-      |> Enum.filter(&(within?(&1, now, 3 * @window_s) and status(&1) == :conflict))
+      |> Enum.filter(&(within?(&1, now, 3 * @window_s) and status(&1, ctx) == :conflict))
       |> length()
 
     if count > 0 do
@@ -184,6 +321,70 @@ defmodule IoLog.Assessment do
         action: "External check by the flight surgeon; verify sensors; extra monitoring",
         source: "Scenario 9"
       }
+    end
+  end
+
+  # Food or water tapped, but the throat sensor saw (almost) no swallowing:
+  # the package was taken, not consumed? Judged once the window has passed.
+  defp not_swallowed_alert(events, now, ctx) do
+    window = Norms.swallow_window_s()
+
+    count =
+      Enum.count(events, fn e ->
+        n = swallow_count(e, ctx)
+
+        e.kind in ["food_intake", "water_intake"] and within?(e, now, @window_s) and
+          DateTime.diff(now, e.occurred_at) >= window and n != nil and
+          n < Norms.min_swallows()
+      end)
+
+    if count > 0 do
+      %{
+        level: :warning,
+        title: "#{count} food/water tap(s) without swallowing: taken, not consumed?",
+        action: "Ask the crew member; check the throat sensor fit",
+        source: "Swallow sensor x NFC"
+      }
+    end
+  end
+
+  # Bursts of swallowing with no food or water tap around them: eating or
+  # drinking that was not logged (see scenario 9, unexplained fluid source).
+  defp unlogged_swallowing_alert(events, now) do
+    swallows =
+      events
+      |> Enum.filter(&(&1.kind == "swallow" and within?(&1, now, @window_s)))
+      |> Enum.sort_by(&DateTime.to_unix(&1.occurred_at, :millisecond))
+
+    intakes = Enum.filter(events, &(&1.kind in ["food_intake", "water_intake"]))
+    count = count_unlogged_bursts(swallows, intakes, 0)
+
+    if count > 0 do
+      %{
+        level: :warning,
+        title: "#{count} swallowing burst(s) without a logged meal or drink: unlogged intake?",
+        action: "Check for untagged food or water; extra monitoring",
+        source: "Swallow sensor x NFC, scenario 9"
+      }
+    end
+  end
+
+  defp count_unlogged_bursts([], _intakes, acc), do: acc
+
+  defp count_unlogged_bursts([first | tail] = swallows, intakes, acc) do
+    {burst, rest} =
+      Enum.split_with(swallows, &(DateTime.diff(&1.occurred_at, first.occurred_at) <= 120))
+
+    logged? =
+      Enum.any?(intakes, fn i ->
+        diff = DateTime.diff(first.occurred_at, i.occurred_at)
+        diff <= 600 and diff >= -180
+      end)
+
+    cond do
+      length(burst) < Norms.swallow_burst() -> count_unlogged_bursts(tail, intakes, acc)
+      logged? -> count_unlogged_bursts(rest, intakes, acc)
+      true -> count_unlogged_bursts(rest, intakes, acc + 1)
     end
   end
 

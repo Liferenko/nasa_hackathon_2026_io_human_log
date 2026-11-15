@@ -41,7 +41,10 @@ defmodule IoLogWeb.DashboardLive do
       now: now,
       names: names,
       summaries: summaries,
-      journal: Enum.take(events, @journal_size),
+      # Swallows come in dozens per meal: one growing "swallowing" row per
+      # burst here, the per-person page lists them one by one.
+      journal: journal_rows(events, @journal_size),
+      context: Assessment.context(events),
       total: length(events),
       planned_water: Norms.planned_water_ml(),
       min_urine: Norms.min_urine_ml()
@@ -56,7 +59,7 @@ defmodule IoLogWeb.DashboardLive do
         <div>
           <h1>BodyLogs I/O Ledger <span class="live">LIVE</span></h1>
           <div class="sub">
-            Real devices only. Every NFC tap is a journal entry, nothing is typed. {@total} entries.
+            Real devices only. Every NFC tap and sensor reading is a journal entry, nothing is typed. {@total} entries.
           </div>
         </div>
         <a href="/nasa" class="button">NASA legacy data</a>
@@ -76,7 +79,7 @@ defmodule IoLogWeb.DashboardLive do
       </div>
 
       <h2>Journal, newest first</h2>
-      <.journal events={@journal} names={@names} now={@now} />
+      <.journal events={@journal} names={@names} now={@now} context={@context} />
     </main>
     """
   end

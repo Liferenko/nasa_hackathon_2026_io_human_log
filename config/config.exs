@@ -11,7 +11,10 @@ config :io_log, :nfc_tags, %{
   "food" => %{kind: "food_intake", zone: "galley"},
   "water" => %{kind: "water_intake", zone: "galley"},
   "toilet-1" => %{kind: "toilet_number_1", zone: "toilet"},
-  "toilet-2" => %{kind: "toilet_number_2", zone: "toilet"}
+  "toilet-2" => %{kind: "toilet_number_2", zone: "toilet"},
+  # Presence: a tag at the entrance of a zone ("I am in the galley now").
+  "zone-galley" => %{kind: "zone_enter", zone: "galley"},
+  "zone-toilet" => %{kind: "zone_enter", zone: "toilet"}
 }
 
 # Endpoint configuration

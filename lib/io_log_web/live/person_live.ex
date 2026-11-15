@@ -31,6 +31,7 @@ defmodule IoLogWeb.PersonLive do
       name: person_name(person, names),
       summary: Assessment.summary(person, events, now),
       journal: Enum.take(events, 100),
+      context: Assessment.context(events),
       planned_water: Norms.planned_water_ml(),
       min_urine: Norms.min_urine_ml()
     )
@@ -56,7 +57,7 @@ defmodule IoLogWeb.PersonLive do
           min_urine={@min_urine}
         />
         <div>
-          <.journal events={@journal} names={@names} now={@now} show_person={false} />
+          <.journal events={@journal} names={@names} now={@now} context={@context} show_person={false} />
         </div>
       </div>
     </main>

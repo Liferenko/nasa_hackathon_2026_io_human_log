@@ -13,10 +13,13 @@ defmodule IoLog.Event do
   # Extend this list to support new kinds of body I/O events.
   # "unmapped_scan" keeps the raw scan of an NFC tag that is not labelled yet:
   # every scan is a journal entry, its meaning can be added later.
-  @kinds ~w(food_intake water_intake toilet_number_1 toilet_number_2 unmapped_scan)
+  # "zone_enter" is presence in a zone (NFC tag at the zone entrance).
+  # "swallow" is one swallow detected by a sensor (phone accelerometer on
+  # the throat).
+  @kinds ~w(food_intake water_intake toilet_number_1 toilet_number_2 unmapped_scan zone_enter swallow)
 
   # Known sources. Not enforced yet, documented for future milestones.
-  @sources ~w(manual_iex nfc ble_zone scale flow mock)
+  @sources ~w(manual_iex nfc ble_zone scale flow phone_accel mock)
 
   @default_person "crew_1"
   @default_source "manual_iex"

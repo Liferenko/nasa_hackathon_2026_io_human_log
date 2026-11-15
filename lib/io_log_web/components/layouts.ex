@@ -62,6 +62,7 @@ defmodule IoLogWeb.Layouts do
           tr.fresh td { animation: glow 3s ease-out; }
           @keyframes glow { from { background: #1d4a3a; } to { background: transparent; } }
           .badge-unmapped { background: #1d2a44; color: var(--info); }
+          .badge-duplicate { background: #26292f; color: var(--muted); }
           .person-layout { display:grid; grid-template-columns: 300px 1fr; gap: 14px; margin-top: 16px; }
           @media (max-width: 800px) { .person-layout { grid-template-columns: 1fr; } }
         </style>
