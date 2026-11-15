@@ -89,6 +89,23 @@ defmodule IoLogWeb.Format do
 
   def clock(_), do: "-"
 
+  @doc """
+  Store-and-forward note for an event that reached the ledger more than a
+  minute after it happened (kept on the device during a link loss), e.g.
+  "stored on device, synced 4 min later". Empty for mock data and live events.
+  """
+  def sync_note(%Event{source: "mock"}), do: nil
+
+  def sync_note(%Event{occurred_at: %DateTime{} = at, inserted_at: %DateTime{} = ins}) do
+    case DateTime.diff(ins, at) do
+      s when s < 60 -> nil
+      s when s < 3600 -> "stored on device, synced #{div(s, 60)} min later"
+      s -> "stored on device, synced #{Float.round(s / 3600, 1)} h later"
+    end
+  end
+
+  def sync_note(_), do: nil
+
   defp swallowing(1, _from, _to), do: "1 swallow"
 
   defp swallowing(count, from, to) do

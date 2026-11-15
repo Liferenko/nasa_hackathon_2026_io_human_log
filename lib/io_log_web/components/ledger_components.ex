@@ -144,7 +144,10 @@ defmodule IoLogWeb.LedgerComponents do
             <td>{kind_label(e.kind)}</td>
             <td>{amount(e)}{swallow_note(Assessment.swallow_count(e, @ctx))}</td>
             <td>{e.zone || "-"}</td>
-            <td class="src-tag">{e.source}</td>
+            <td class="src-tag">
+              {e.source}
+              <div :if={sync_note(e)} class="late">{sync_note(e)}</div>
+            </td>
             <td>
               <span class={"badge badge-#{Assessment.status(e, @ctx)}"}>
                 {Assessment.status(e, @ctx)}

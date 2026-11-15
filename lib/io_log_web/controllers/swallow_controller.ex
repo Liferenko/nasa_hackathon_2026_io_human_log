@@ -13,6 +13,13 @@ defmodule IoLogWeb.SwallowController do
   While the page is open it also listens for NFC tags (Web NFC, Chrome on
   Android): tapping a labelled food package to the phone sends the scan to
   `POST /api/scans`, so food intake is logged without leaving this page.
+
+  Store-and-forward: every reading goes to an outbox on the phone first
+  (localStorage, survives a reload) with a unique `event_uid` and its
+  original timestamp, then is sent in order. If the link is lost, readings
+  stay on the phone and are retried every 3 s; the server ignores repeats
+  of the same `event_uid`. "Simulate comm blackout" holds the outbox for
+  the demo.
   """
 
   use IoLogWeb, :controller
@@ -44,7 +51,7 @@ defmodule IoLogWeb.SwallowController do
         .big { font-size: 64px; font-weight: 700; text-align: center; margin: 8px 0 0; }
         .label { text-align: center; color: #8a93a8; }
         canvas { width: 100%; height: 140px; background: #121828; border-radius: 10px; margin-top: 12px; }
-        #status, #nfc { margin-top: 10px; font-size: 13px; color: #8a93a8; min-height: 18px; }
+        #status, #nfc, #link { margin-top: 10px; font-size: 13px; color: #8a93a8; min-height: 18px; }
         .ok { color: #4ade80; } .bad { color: #f87171; }
         input[type=range] { flex: 1; }
       </style>
@@ -68,6 +75,8 @@ defmodule IoLogWeb.SwallowController do
       <canvas id="plot" width="600" height="140"></canvas>
       <div id="status">Not started.</div>
       <div id="nfc">NFC: off</div>
+      <div id="link">Link: OK</div>
+      <button id="blackout" style="width:100%;margin-top:8px">Simulate comm blackout</button>
       <button id="nfcBtn" style="display:none;width:100%;margin-top:8px">Enable NFC</button>
 
       <script>
@@ -146,23 +155,93 @@ defmodule IoLogWeb.SwallowController do
           if (duration >= MIN_DUR && duration <= MAX_DUR) report(burstStart, burstPeak, duration, thr);
         }
 
-        async function report(start, peak, duration, thr) {
+        // --- Store-and-forward: the phone keeps every reading until the ledger has it ---
+        const OUTBOX_KEY = "bodylogs_outbox";
+        const callbacks = new Map();
+        let outbox = loadOutbox(), flushing = false, blackout = false, linkDown = false;
+
+        function loadOutbox() {
+          try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch (_) { return []; }
+        }
+
+        function saveOutbox() {
+          try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch (_) {}
+          renderLink();
+        }
+
+        function newUid() {
+          if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+          return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+        }
+
+        // Queue a reading and try to send it; onSent(res, body) runs once the ledger answers.
+        function deliver(url, body, onSent) {
+          body.event_uid = newUid();
+          if (onSent) callbacks.set(body.event_uid, onSent);
+          outbox.push({ url, body });
+          saveOutbox();
+          flush();
+          return outbox.length;
+        }
+
+        async function flush() {
+          if (flushing || blackout || !outbox.length) { renderLink(); return; }
+          flushing = true;
+          try {
+            while (outbox.length && !blackout) {
+              const item = outbox[0];
+              let res;
+              try {
+                res = await fetch(item.url, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(item.body)
+                });
+              } catch (_) { linkDown = true; break; }
+              if (res.status >= 500 || res.status === 408 || res.status === 429) { linkDown = true; break; }
+              linkDown = false;
+              outbox.shift();
+              saveOutbox();
+              const cb = callbacks.get(item.body.event_uid);
+              callbacks.delete(item.body.event_uid);
+              if (cb) cb(res, await res.json().catch(() => ({})));
+            }
+          } finally {
+            flushing = false;
+            renderLink();
+          }
+        }
+
+        function renderLink() {
+          const n = outbox.length, el = $("link");
+          if (!el) return;
+          if (blackout) { el.textContent = "Link: comm blackout (demo), " + n + " reading(s) stored on this phone"; el.className = "bad"; }
+          else if (linkDown) { el.textContent = "Link lost: " + n + " reading(s) stored on this phone, retrying"; el.className = "bad"; }
+          else if (n) { el.textContent = "Link: syncing " + n + " stored reading(s)..."; el.className = ""; }
+          else { el.textContent = "Link: OK, nothing pending"; el.className = "ok"; }
+        }
+
+        $("blackout").onclick = () => {
+          blackout = !blackout;
+          $("blackout").textContent = blackout ? "Restore link" : "Simulate comm blackout";
+          if (!blackout) flush();
+          renderLink();
+        };
+
+        setInterval(flush, 3000);
+        window.addEventListener("online", flush);
+
+        function report(start, peak, duration, thr) {
           const detectedAt = new Date(Date.now() - (performance.now() - start)).toISOString();
           count += 1;
           $("count").textContent = count;
-          try {
-            const res = await fetch("/api/sensors", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                kind: "swallow", device: sel.value, source: "phone_accel", detected_at: detectedAt,
-                payload: { peak: +peak.toFixed(3), duration_ms: duration, threshold: +thr.toFixed(3) }
-              })
-            });
+          deliver("/api/sensors", {
+            kind: "swallow", device: sel.value, source: "phone_accel", detected_at: detectedAt,
+            payload: { peak: +peak.toFixed(3), duration_ms: duration, threshold: +thr.toFixed(3) }
+          }, (res) => {
             setStatus(res.ok ? "Logged at " + new Date().toLocaleTimeString() : "Server said " + res.status, res.ok ? "ok" : "bad");
-          } catch (err) {
-            setStatus("Not sent: " + err.message, "bad");
-          }
+          });
+          if (blackout || linkDown) setStatus("Swallow stored on this phone, will sync later", "bad");
         }
 
         function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = cls || ""; }
@@ -215,20 +294,14 @@ defmodule IoLogWeb.SwallowController do
           if (tagId === lastTag && now - lastTagAt < 2000) return;
           lastTag = tagId; lastTagAt = now;
           if (navigator.vibrate) navigator.vibrate(80);
-          try {
-            const res = await fetch("/api/scans", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ tag_id: tagId, device: sel.value, scanned_at: new Date(now).toISOString() })
+          const time = new Date(now).toLocaleTimeString();
+          deliver("/api/scans", { tag_id: tagId, device: sel.value, scanned_at: new Date(now).toISOString() },
+            (res, body) => {
+              if (res.status === 201) setNfc(time + " logged " + (body.item || body.tag || body.kind), "ok");
+              else if (res.status === 202) setNfc(time + " unregistered tag " + tagId, "bad");
+              else setNfc("server said " + res.status, "bad");
             });
-            const body = await res.json().catch(() => ({}));
-            const time = new Date(now).toLocaleTimeString();
-            if (res.status === 201) setNfc(time + " logged " + (body.item || body.tag || body.kind), "ok");
-            else if (res.status === 202) setNfc(time + " unregistered tag " + tagId, "bad");
-            else setNfc("server said " + res.status, "bad");
-          } catch (err) {
-            setNfc("not sent: " + err.message, "bad");
-          }
+          if (blackout || linkDown) setNfc(time + " tag stored on this phone, will sync later", "bad");
         }
 
         $("start").onclick = async () => {

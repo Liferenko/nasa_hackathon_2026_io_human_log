@@ -144,6 +144,14 @@ async function flushQueue() {
   return rest.length;
 }
 
+// Retry queued scans in the background (store-and-forward)
+setInterval(async () => {
+  if (!loadQueue().length) return;
+  const left = await flushQueue();
+  if (!left) setStatus("Back online: queued scans synced.", "ok");
+}, 5000);
+window.addEventListener("online", flushQueue);
+
 // Debounce: holding a tag to the phone can fire several reads in a row
 let lastId = null, lastTime = 0;
 
@@ -152,6 +160,8 @@ async function logScan(tagId, now) {
     tag_id: tagId,
     device: $("device").value.trim() || "unknown",
     scanned_at: new Date(now).toISOString(),
+    // Same id on every resend, so the ledger stores the scan once
+    event_uid: (crypto.randomUUID && crypto.randomUUID()) || now.toString(36) + Math.random().toString(36).slice(2),
   };
   const time = new Date(now).toLocaleTimeString();
   const li = addLogLine(tagId, "pending", time + " · sending…");
@@ -162,6 +172,9 @@ async function logScan(tagId, now) {
       const what = ledger.item || ledger.tag;
       updateLogLine(li, "ok", `<b class="item">${esc(what)}</b> · ${esc(time)} · ${esc(ledger.person)}`);
       setStatus("Logged: " + what, "ok");
+    } else if (ledger.status === "queued_for_ledger") {
+      updateLogLine(li, "pending", `${esc(time)} · stored, ledger offline: will sync automatically`);
+      setStatus("Ledger offline. Scan stored and will sync.", "pending");
     } else if (ledger.status === "unregistered_tag") {
       updateLogLine(li, "pending", `${esc(time)} · saved, but sticker is not registered`);
       setStatus("Unknown sticker. Switch to \"Register sticker\" to label it.", "pending");

@@ -41,6 +41,11 @@ defmodule IoLog do
     * `:payload` - free-form map stored as JSON (default `%{}`)
     * `:occurred_at` - `DateTime` of the event (default: now, UTC)
 
+  Store-and-forward: a device that lost its link keeps readings and sends
+  them again later. If the payload carries an `"event_uid"` that is
+  already in the ledger, the existing event is returned and nothing is
+  inserted or broadcast, so a retry never doubles an event.
+
   Returns `{:ok, %IoLog.Event{}}` or `{:error, %Ecto.Changeset{}}`.
   """
   @spec record(atom() | String.t(), keyword()) ::
@@ -53,11 +58,33 @@ defmodule IoLog do
       |> Map.new()
       |> Map.put(:kind, to_string(kind))
 
-    attrs
-    |> Event.changeset()
-    |> Repo.insert()
-    |> broadcast()
+    case find_by_uid(event_uid(attrs)) do
+      %Event{} = existing ->
+        {:ok, existing}
+
+      nil ->
+        attrs
+        |> Event.changeset()
+        |> Repo.insert()
+        |> broadcast()
+    end
   end
+
+  @doc "The event recorded with this device-side `event_uid`, or nil."
+  @spec find_by_uid(String.t() | nil) :: Event.t() | nil
+  def find_by_uid(uid) when is_binary(uid) and uid != "" do
+    Event
+    |> where([e], fragment("json_extract(?, '$.event_uid') = ?", e.payload, ^uid))
+    |> limit(1)
+    |> Repo.one()
+  end
+
+  def find_by_uid(_), do: nil
+
+  defp event_uid(%{payload: payload}) when is_map(payload),
+    do: Map.get(payload, "event_uid") || Map.get(payload, :event_uid)
+
+  defp event_uid(_), do: nil
 
   @doc """
   Lists events, newest first.

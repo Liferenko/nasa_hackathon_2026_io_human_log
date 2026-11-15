@@ -39,7 +39,8 @@ defmodule IoLogWeb.ScanController do
                 "tag" => tag,
                 "tag_uid" => NfcRegistry.normalize_uid(uid),
                 "device" => device,
-                "received_at" => params["received_at"]
+                "received_at" => params["received_at"],
+                "event_uid" => params["event_uid"]
               })
           )
 
@@ -67,7 +68,8 @@ defmodule IoLogWeb.ScanController do
             payload: %{
               "tag_uid" => NfcRegistry.normalize_uid(uid),
               "device" => device,
-              "received_at" => params["received_at"]
+              "received_at" => params["received_at"],
+              "event_uid" => params["event_uid"]
             }
           )
 

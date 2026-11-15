@@ -29,7 +29,8 @@ defmodule IoLogWeb.SensorController do
         payload:
           Map.merge(payload, %{
             "device" => device,
-            "received_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+            "received_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+            "event_uid" => params["event_uid"]
           })
       )
 

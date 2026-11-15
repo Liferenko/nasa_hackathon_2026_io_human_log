@@ -2,8 +2,11 @@
 """Minimal NFC scan collector. Standard library only.
 
 GET  /            -> serves index.html (the Web NFC page)
-POST /api/scans   -> body {"tag_id", "device", "scanned_at"}; appended to scans.jsonl
-                     and forwarded to the Phoenix ledger (IO_LOG_URL)
+POST /api/scans   -> body {"tag_id", "device", "scanned_at", "event_uid"}; appended to
+                     scans.jsonl and forwarded to the Phoenix ledger (IO_LOG_URL).
+                     If the ledger is unreachable the scan waits in outbox.jsonl
+                     and is resent every 5 s (store-and-forward); the ledger
+                     ignores repeats of the same event_uid.
 GET  /api/scans   -> last 100 scans as JSON
 GET  /api/tags    -> tag types, proxied to the Phoenix ledger
 POST /api/tags    -> body {"tag_id", "tag", "item", "amount", "unit"}: label a
@@ -16,6 +19,9 @@ Web NFC requires HTTPS, so expose it over the tailnet:
 import json
 import os
 import sys
+import threading
+import time
+import uuid
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -25,6 +31,9 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 DATA_FILE = BASE / "scans.jsonl"
 INDEX_FILE = BASE / "index.html"
+OUTBOX_FILE = BASE / "outbox.jsonl"
+OUTBOX_LOCK = threading.Lock()
+RETRY_SECONDS = 5
 
 # Every scan is also forwarded to the Phoenix ledger (io_log). Set
 # IO_LOG_URL="" to disable forwarding.
@@ -72,6 +81,30 @@ def forward_to_ledger(record):
         return {"status": "forward_failed", "error": str(e)}
 
 
+def queue_for_ledger(record):
+    """Keep a scan the ledger did not take; retried by retry_outbox()."""
+    with OUTBOX_LOCK, OUTBOX_FILE.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def retry_outbox():
+    """Background loop: resend queued scans in order until the ledger has them."""
+    while True:
+        time.sleep(RETRY_SECONDS)
+        with OUTBOX_LOCK:
+            if not OUTBOX_FILE.exists():
+                continue
+            pending = [json.loads(l) for l in OUTBOX_FILE.read_text().splitlines() if l.strip()]
+            left = []
+            for i, record in enumerate(pending):
+                result = forward_to_ledger(record)
+                if result.get("status") == "forward_failed":
+                    left = pending[i:]  # link still down: keep the order, try later
+                    break
+                print(f"[outbox] synced {record['tag_id']} -> {result.get('status')}", flush=True)
+            OUTBOX_FILE.write_text("".join(json.dumps(r) + "\n" for r in left))
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, content_type="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -111,10 +144,15 @@ class Handler(BaseHTTPRequestHandler):
             "device": str(payload.get("device", "unknown")),
             "scanned_at": payload.get("scanned_at"),          # phone clock
             "received_at": datetime.now(timezone.utc).isoformat(),  # server clock
+            # Same id on every resend, so the ledger stores the scan once
+            "event_uid": str(payload.get("event_uid") or uuid.uuid4()),
         }
         with DATA_FILE.open("a") as f:
             f.write(json.dumps(record) + "\n")
         ledger = forward_to_ledger(record)
+        if ledger.get("status") == "forward_failed":
+            queue_for_ledger(record)
+            ledger = {**ledger, "status": "queued_for_ledger"}
         print(f"[scan] {record['device']}: {tag_id} -> ledger: {ledger.get('status')}", flush=True)
         self._send(201, {**record, "ledger": ledger})
 
@@ -132,5 +170,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    threading.Thread(target=retry_outbox, daemon=True).start()
     print(f"Listening on http://0.0.0.0:{port}")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
