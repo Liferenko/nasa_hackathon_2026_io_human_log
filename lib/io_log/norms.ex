@@ -34,10 +34,10 @@ defmodule IoLog.Norms do
   @doc """
   Debounce window, seconds: a repeat tap of the same tag by the same person
   within this window is a duplicate, not a new event. Short values suit the
-  live demo (food 10 s, toilet 30 s).
+  live demo (food 10 s, toilet 30 s). Water has none: each tap is one sip,
+  and sips can come less than 2 s apart.
   """
   def debounce_s("food_intake"), do: 10
-  def debounce_s("water_intake"), do: 10
   def debounce_s("toilet_number_1"), do: 30
   def debounce_s("toilet_number_2"), do: 30
   def debounce_s("zone_enter"), do: 10

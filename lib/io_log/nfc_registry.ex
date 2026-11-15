@@ -43,6 +43,14 @@ defmodule IoLog.NfcRegistry do
   end
 
   @doc """
+  Default payload for a tag type: `%{"volume_ml" => n}` when the tag config
+  has `:default_volume_ml`, otherwise `%{}`.
+  """
+  @spec default_payload(map()) :: map()
+  def default_payload(%{default_volume_ml: ml}) when is_number(ml), do: %{"volume_ml" => ml}
+  def default_payload(_config), do: %{}
+
+  @doc """
   Registers (or re-registers) a tag UID as an item of tag type `"tag"`.
 
   `attrs` is a map with "tag" (required, one of the configured tag names)

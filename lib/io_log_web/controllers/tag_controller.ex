@@ -31,7 +31,7 @@ defmodule IoLogWeb.TagController do
              person: person,
              source: "nfc",
              zone: Map.get(config, :zone),
-             payload: %{"tag" => tag}
+             payload: Map.put(IoLog.NfcRegistry.default_payload(config), "tag", tag)
            ) do
       page(
         conn,

@@ -35,7 +35,9 @@ defmodule IoLogWeb.ScanController do
             zone: Map.get(config, :zone),
             occurred_at: parse_time(params["scanned_at"]),
             payload:
-              Map.merge(Map.get(config, :item, %{}), %{
+              NfcRegistry.default_payload(config)
+              |> Map.merge(Map.get(config, :item, %{}))
+              |> Map.merge(%{
                 "tag" => tag,
                 "tag_uid" => NfcRegistry.normalize_uid(uid),
                 "device" => device,

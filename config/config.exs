@@ -9,8 +9,12 @@ config :io_log,
 # e.g. http://<host>:4000/t/toilet-2
 config :io_log, :nfc_tags, %{
   "food" => %{kind: "food_intake", zone: "galley"},
-  "water" => %{kind: "water_intake", zone: "galley"},
-  "toilet-1" => %{kind: "toilet_number_1", zone: "toilet"},
+  # default_volume_ml: volume logged per tap when the tag carries no amount.
+  # One tap on the bottle = one sip: ~20 ml (natural sips from a cup or
+  # bottle measure ~16-25 ml, Bennett et al. 2009, Dysphagia 24:152).
+  "water" => %{kind: "water_intake", zone: "galley", default_volume_ml: 20},
+  # One tap = one toilet visit, ~120 ml of urine.
+  "toilet-1" => %{kind: "toilet_number_1", zone: "toilet", default_volume_ml: 120},
   "toilet-2" => %{kind: "toilet_number_2", zone: "toilet"},
   # Presence: a tag at the entrance of a zone ("I am in the galley now").
   "zone-galley" => %{kind: "zone_enter", zone: "galley"},
